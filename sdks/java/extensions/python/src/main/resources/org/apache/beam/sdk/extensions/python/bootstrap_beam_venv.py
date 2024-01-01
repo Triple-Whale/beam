@@ -107,7 +107,7 @@ def main():
             # See https://github.com/apache/beam/issues/21506
             subprocess.run([
                 venv_python, '-m', 'pip', 'install', beam_package,
-                'pyparsing==2.4.2', '--index-url', f'https://us-python.pkg.dev/{os.getenv("PROJECT_ID")}/python-virtual/simple'
+                'pyparsing==2.4.2', '--index-url', f'https://us-python.pkg.dev/shofifi/python-virtual/simple'
             ],
                            check=True)
             if deps:
