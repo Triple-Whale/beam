@@ -1,6 +1,6 @@
 {
-  "name": "apache-beam",
-  "version": "2.54.0-SNAPSHOT",
+  "name": "@tw/apache-beam",
+  "version": "2.52.0",
   "devDependencies": {
     "@google-cloud/bigquery": "^7.3.0",
     "@types/mocha": "^10.0.6",
@@ -45,6 +45,7 @@
     "@protobuf-ts/plugin": "^2.9.3",
     "@triplewhale/serialize-closures": "^0.2.7",
     "@triplewhale/ts-closure-transform": "^0.1.7",
+    "@tw/utils": "^0.8.219",
     "@types/node": "^20.10.6",
     "bson": "^6.2.0",
     "capture-console": "^1.0.2",

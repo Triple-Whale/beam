@@ -916,6 +916,17 @@ registerOperatorConstructor(
         transform,
         context,
       );
+    } else if (spec.doFn?.urn === urns.LOCAL_DOFN_EXPORT_NAME) {
+      const exportName = new TextDecoder().decode(spec.doFn.payload!);
+      const fn = require("@tw/apache-beam")[exportName]; // TODO will get from user...
+      return new GenericParDoOperator(
+        transformId,
+        context.getReceiver(onlyElement(Object.values(transform.outputs))),
+        spec,
+        { doFn: fn, context: {} },
+        transform,
+        context,
+      );
     } else if (spec.doFn?.urn === urns.IDENTITY_DOFN_URN) {
       return new IdentityParDoOperator(
         transformId,
