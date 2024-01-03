@@ -43,7 +43,7 @@ import * as artifacts from "../artifacts";
 import { Service as JobService } from "../../utils/service";
 
 import * as serialization from "../../serialization";
-import { version as beamVersion } from "../../version";
+import { beamVersion } from "../../utils/packageJson";
 
 const version = beamVersion.split('.').slice(0, 2).join('.') + '.0'
 
@@ -235,7 +235,7 @@ export class PortableRunner extends Runner {
             environments.asDockerEnvironment(
               env,
               (options as any)?.sdkContainerImage ||
-                DOCKER_BASE + ":" + version.replace("-SNAPSHOT", ".dev"),
+                DOCKER_BASE + ":" + beamVersion.replace("-SNAPSHOT", ".dev")
             );
           const deps = pipeline.components!.environments[envId].dependencies;
 
