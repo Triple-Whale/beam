@@ -413,7 +413,7 @@ export class PythonService extends SubprocessService {
     console.debug("Invoking Python bootstrap script.");
     const result = childProcess.spawnSync(
       PythonService.whichPython(),
-      [bootstrapScript],
+      [bootstrapScript, "--beam_version", "2.54.0"],
       { encoding: "utf-8" },
     );
     if (result.status === 0) {
