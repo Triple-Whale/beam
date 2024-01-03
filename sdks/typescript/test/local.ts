@@ -24,6 +24,7 @@ import { PortableRunner } from "../src/apache_beam/runners/portable_runner/runne
 
 export const log = {
   exportName: 'log',
+  moduleName: '@tw/apache-beam',
   process: function (lines) {
     console.log('ssss',lines);
     

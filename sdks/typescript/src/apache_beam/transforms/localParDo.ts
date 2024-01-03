@@ -51,6 +51,11 @@ export interface LocalDoFn<InputT, OutputT, ContextT = undefined> {
   exportName: string;
 
   /**
+   * The name of the module its exported under
+   */
+  moduleName: string;
+
+  /**
    * Process a single element from the PCollection, returning an iterable
    * of zero or more result elements.
    *
@@ -156,7 +161,12 @@ export function localParDo<InputT, OutputT, ContextT = undefined>(
         runnerApi.ParDoPayload.create({
           doFn: runnerApi.FunctionSpec.create({
             urn: urns.LOCAL_DOFN_EXPORT_NAME,
-            payload: new TextEncoder().encode(doFn.exportName),
+            payload: new TextEncoder().encode(
+              JSON.stringify({
+                exportName: doFn.exportName,
+                moduleName: doFn.moduleName,
+              }),
+            ),
           }),
           sideInputs: sideInputs,
         }),
