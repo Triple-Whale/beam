@@ -22,11 +22,8 @@ import * as urns from "../internal/urns";
 import { GeneralObjectCoder } from "../coders/js_coders";
 import { PCollection } from "../pvalue";
 import { Pipeline } from "../internal/pipeline";
-import { serializeFn } from "../internal/serialize";
 import { PTransform, withName, extractName } from "./transform";
-import { PaneInfo, Instant, Window, WindowedValue } from "../values";
-import { requireForSerialization } from "../serialization";
-import { packageName } from "../utils/packageJson";
+import { WindowedValue } from "../values";
 
 /**
  * The interface used to apply an elementwise MappingFn to a PCollection.
@@ -36,11 +33,16 @@ import { packageName } from "../utils/packageJson";
  *
  * See also https://beam.apache.org/documentation/programming-guide/#pardo
  */
-export interface DoFn<InputT, OutputT, ContextT = undefined> {
+export interface LocalDoFn<InputT, OutputT, ContextT = undefined> {
   /**
    * If provided, the default name to use for this operation.
    */
   beamName?: string;
+
+  /**
+   * The name its exported under
+   */
+  exportName: string;
 
   /**
    * Process a single element from the PCollection, returning an iterable
@@ -51,10 +53,7 @@ export interface DoFn<InputT, OutputT, ContextT = undefined> {
    * now "activated" in the sense that side inputs, metrics, etc. are
    * available with runtime values/effects).
    */
-  process: (
-    element: InputT,
-    context: ContextT,
-  ) => Iterable<OutputT> | void | Promise<Iterable<OutputT> | void>;
+  process: (element: InputT, context: ContextT) => Iterable<OutputT> | void | Promise<Iterable<OutputT> | void>;
 
   /**
    * Called once at the start of every bundle, before any `process()` calls.
@@ -85,8 +84,8 @@ export interface DoFn<InputT, OutputT, ContextT = undefined> {
 /**
  * Creates a PTransform that applies a `DoFn` to a PCollection.
  */
-export function parDo<InputT, OutputT, ContextT = undefined>(
-  doFn: DoFn<InputT, OutputT, ContextT>,
+export function localParDo<InputT, OutputT, ContextT = undefined>(
+  doFn: LocalDoFn<InputT, OutputT, ContextT>,
   context: ContextT = undefined!,
 ): PTransform<PCollection<InputT>, PCollection<OutputT>> {
   if (extractContext(doFn)) {
@@ -103,7 +102,7 @@ export function parDo<InputT, OutputT, ContextT = undefined>(
     if (typeof context === "object") {
       contextCopy = Object.create(context as Object) as any;
       const components = pipeline.context.components;
-      for (const [name, value] of Object.entries(context as object)) {
+      for (const [name, value] of Object.entries(context as Object)) {
         if (value instanceof SideInputParam) {
           const inputName = "side." + name;
           transformProto.inputs[inputName] = value.pcoll.getId();
@@ -146,15 +145,12 @@ export function parDo<InputT, OutputT, ContextT = undefined>(
 
     // Now finally construct the proto.
     transformProto.spec = runnerApi.FunctionSpec.create({
-      urn: parDo.urn,
+      urn: localParDo.urn,
       payload: runnerApi.ParDoPayload.toBinary(
         runnerApi.ParDoPayload.create({
           doFn: runnerApi.FunctionSpec.create({
-            urn: urns.SERIALIZED_JS_DOFN_INFO,
-            payload: serializeFn({
-              doFn: doFn,
-              context: contextCopy,
-            }),
+            urn: urns.LOCAL_DOFN_EXPORT_NAME,
+            payload: new TextEncoder().encode(doFn.exportName),
           }),
           sideInputs: sideInputs,
         }),
@@ -169,120 +165,18 @@ export function parDo<InputT, OutputT, ContextT = undefined>(
     );
   }
 
-  return withName(`parDo(${extractName(doFn)})`, expandInternal);
+  return withName(
+    `parDo(${extractName(doFn.beamName || doFn.exportName)})`,
+    expandInternal,
+  );
 }
 
 // TODO: (Cleanup) use runnerApi.StandardPTransformClasss_Primitives.PAR_DO.urn.
 /** @internal */
-parDo.urn = "beam:transform:pardo:v1";
-
-export type SplitOptions = {
-  knownTags?: string[];
-  unknownTagBehavior?: "error" | "ignore" | "rename" | undefined;
-  unknownTagName?: string;
-  exclusive?: boolean;
-};
-
-/**
- * Splits a single PCollection of objects, with keys k, into an object of
- * PCollections, with the same keys k, where each PCollection consists of the
- * values associated with that key. That is,
- *
- * `PCollection<{a: T, b: U, ...}>` maps to `{a: PCollection<T>, b: PCollection<U>, ...}`
- */
-// TODO: (API) Consider as top-level method.
-// TODO: Naming.
-export function split<X extends { [key: string]: unknown }>(
-  tags: string[],
-  options: SplitOptions = {},
-): PTransform<PCollection<X>, { [P in keyof X]: PCollection<X[P]> }> {
-  function expandInternal(
-    input: PCollection<X>,
-    pipeline: Pipeline,
-    transformProto: runnerApi.PTransform,
-  ) {
-    if (options.exclusive === undefined) {
-      options.exclusive = true;
-    }
-    if (options.unknownTagBehavior === undefined) {
-      options.unknownTagBehavior = "error";
-    }
-    if (
-      options.unknownTagBehavior === "rename" &&
-      !tags.includes(options.unknownTagName!)
-    ) {
-      tags.push(options.unknownTagName!);
-    }
-    if (options.knownTags === undefined) {
-      options.knownTags = tags;
-    }
-
-    transformProto.spec = runnerApi.FunctionSpec.create({
-      urn: parDo.urn,
-      payload: runnerApi.ParDoPayload.toBinary(
-        runnerApi.ParDoPayload.create({
-          doFn: runnerApi.FunctionSpec.create({
-            urn: urns.SPLITTING_JS_DOFN_URN,
-            payload: serializeFn(options),
-          }),
-        }),
-      ),
-    });
-
-    return Object.fromEntries(
-      tags.map((tag) => [
-        tag,
-        pipeline.createPCollectionInternal<X[typeof tag]>(
-          pipeline.context.getPCollectionCoderId(input),
-        ),
-      ]),
-    ) as { [P in keyof X]: PCollection<X[P]> };
-  }
-
-  return withName(`Split(${tags})`, expandInternal);
-}
-
-export function partition<T>(
-  partitionFn: (element: T, numPartitions: number) => number,
-  numPartitions: number,
-): PTransform<PCollection<T>, PCollection<T>[]> {
-  return function partition(input: PCollection<T>) {
-    const indices = Array.from({ length: numPartitions }, (v, i) =>
-      i.toString(),
-    );
-    const splits = input
-      .map((x) => {
-        const part = partitionFn(x, numPartitions);
-        return { ["" + part]: x };
-      })
-      .apply(split(indices));
-    return indices.map((ix) => splits[ix]);
-  };
-}
-
-/**
- * Used to declare the need for parameters such as counters, windowing context,
- * state, etc. that do not have to be provided externally (such as side inputs).
- *
- * This can be useful to bind the context of a parallel operation outside of
- * its application (such as map or pardo).
- */
-export function withContext<
-  ContextT,
-  T extends
-    | DoFn<unknown, unknown, ContextT>
-    | ((input: unknown, context: ContextT) => unknown),
->(fn: T, contextSpec: ContextT): T {
-  const untypedFn = fn as any;
-  untypedFn.beamPardoContextSpec = {
-    ...untypedFn.beamPardoContextSpec,
-    ...contextSpec,
-  };
-  return fn;
-}
+localParDo.urn = "beam:transform:pardo:v1";
 
 /** @internal */
-export function extractContext(fn) {
+function extractContext(fn) {
   return fn.beamPardoContextSpec;
 }
 
@@ -290,7 +184,7 @@ export function extractContext(fn) {
  * This is the root class of special parameters that can be provided in the
  * context of a map or DoFn.process method.
  */
-export class ParDoParam {
+class ParDoParam {
   // Provided externally.
   /** @internal */
   protected provider: ParamProvider | undefined;
@@ -303,7 +197,7 @@ export class ParDoParam {
  * At runtime, one can invoke the special `lookup` method to retrieve the
  * relevant value associated with the currently-being-processed element.
  */
-export class ParDoLookupParam<T> extends ParDoParam {
+class ParDoLookupParam<T> extends ParDoParam {
   // TODO: Nameing "get" seems to be special.
   lookup(): T {
     if (this.provider === undefined) {
@@ -318,7 +212,7 @@ export class ParDoLookupParam<T> extends ParDoParam {
  * At runtime, one can invoke the special `update` method to update the
  * relevant value associated with the currently-being-processed element.
  */
-export class ParDoUpdateParam<T> extends ParDoParam {
+class ParDoUpdateParam<T> extends ParDoParam {
   update(value: T): void {
     if (this.provider === undefined) {
       throw new Error("Cannot be called outside of a DoFn's process method.");
@@ -334,21 +228,9 @@ export class ParDoUpdateParam<T> extends ParDoParam {
  *
  * @internal
  */
-export interface ParamProvider {
+interface ParamProvider {
   lookup<T>(param: ParDoLookupParam<T>): T;
   update<T>(param: ParDoUpdateParam<T>, value: T): void;
-}
-
-export function windowParam(): ParDoLookupParam<Window> {
-  return new ParDoLookupParam<Window>("window");
-}
-
-export function timestampParam(): ParDoLookupParam<Instant> {
-  return new ParDoLookupParam<Instant>("timestamp");
-}
-
-export function paneInfoParam(): ParDoLookupParam<PaneInfo> {
-  return new ParDoLookupParam<PaneInfo>("paneinfo");
 }
 
 interface SideInputAccessor<PCollT, AccessorT, ValueT> {
@@ -368,7 +250,7 @@ interface SideInputAccessor<PCollT, AccessorT, ValueT> {
  *
  * See also https://beam.apache.org/documentation/programming-guide/#side-inputs
  */
-export class SideInputParam<
+class SideInputParam<
   PCollT,
   AccessorT,
   ValueT,
@@ -401,72 +283,3 @@ function copySideInputWithId<PCollT, AccessorT, ValueT>(
   delete copy.pcoll;
   return copy;
 }
-
-export function iterableSideInput<T>(
-  pcoll: PCollection<T>,
-): SideInputParam<T, Iterable<T>, Iterable<T>> {
-  return new SideInputParam<T, Iterable<T>, Iterable<T>>(pcoll, {
-    accessPattern: "beam:side_input:iterable:v1",
-    toValue: (iter: Iterable<T>) => iter,
-  });
-}
-
-export function singletonSideInput<T>(
-  pcoll: PCollection<T>,
-  defaultValue: T | undefined = undefined,
-): SideInputParam<T, Iterable<T>, T> {
-  return new SideInputParam<T, Iterable<T>, T>(pcoll, {
-    accessPattern: "beam:side_input:iterable:v1",
-    toValue: (iter: Iterable<T>) => {
-      const asArray = Array.from(iter);
-      if (
-        asArray.length === 0 &&
-        defaultValue !== null &&
-        defaultValue !== undefined
-      ) {
-        return defaultValue;
-      } else if (asArray.length === 1) {
-        return asArray[0];
-      } else {
-        throw new Error("Expected a single element, got " + asArray.length);
-      }
-    },
-  });
-}
-
-// TODO: (Extension) Map side inputs.
-
-/**
- * The superclass of all metric accessors, such as counters and distributions.
- */
-export class Metric<T> extends ParDoUpdateParam<T> {
-  constructor(
-    readonly metricType: string,
-    readonly name: string,
-  ) {
-    super("metric");
-  }
-}
-
-// Subclass to add the increment() method.
-export class Counter extends Metric<number> {
-  constructor(name: string) {
-    super("beam:metric:user:sum_int64:v1", name);
-  }
-  increment(value: number = 1) {
-    this.update(value);
-  }
-}
-
-export function counter(name: string): Counter {
-  return new Counter(name);
-}
-
-export function distribution(name: string): Metric<number> {
-  return new Metric("beam:metric:user:distribution_int64:v1", name);
-}
-
-// TODO: (Extension) Add providers for state, timers,
-// restriction trackers, etc.
-
-requireForSerialization(`${packageName}/transforms/pardo`, exports);
