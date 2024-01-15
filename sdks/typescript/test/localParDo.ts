@@ -16,28 +16,22 @@
  * limitations under the License.
  */
 
+import { registerLocalParDo } from "../src/apache_beam/serialization";
 import * as beam from "../src/apache_beam";
 import { directRunner } from "../src/apache_beam/runners/direct_runner";
-import * as testing from "../src/apache_beam/testing/assert";
 
-import { PortableRunner } from "../src/apache_beam/runners/portable_runner/runner";
+export const log = {
+  exportName: 'log',
+  process: function (lines) {
+    console.log(lines);
+    return lines
+  }
+};
 
-function wordCount(
-  lines: beam.PCollection<string>
-): beam.PCollection<{
-  element: any;
-  count: number;
-}>{
-  return lines
-    .map((s: string) => s.toLowerCase())
-    .flatMap(function* splitWords(line: string) {
-      yield* line.split(/[^a-z]+/);
-    })
-    .apply(beam.countPerElement());
-}
+registerLocalParDo(log)
 
-describe("wordcount", function () {
-  it("wordcount", async function () {
+describe("local", function () {
+  it("local", async function () {
     await directRunner().run((root) => {
       const lines = root.apply(
         beam.create([
@@ -48,28 +42,9 @@ describe("wordcount", function () {
         ])
       );
 
-      lines.apply(wordCount).map(console.log);
+      lines.apply(beam.localParDo(log))
     });
   });
 
-  it("wordcount assert", async function () {
-    await directRunner().run((root) => {
-      const lines = root.apply(
-        beam.create(["And God said, Let there be light: and there was light"])
-      );
 
-      lines.apply(wordCount).apply(
-        testing.assertDeepEqual([
-          { element: "and", count: 2 },
-          { element: "god", count: 1 },
-          { element: "said", count: 1 },
-          { element: "let", count: 1 },
-          { element: "there", count: 2 },
-          { element: "be", count: 1 },
-          { element: "light", count: 2 },
-          { element: "was", count: 1 },
-        ])
-      );
-    });
-  });
 });
