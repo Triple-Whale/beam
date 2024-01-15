@@ -283,7 +283,7 @@ export class JavaJarService extends SubprocessService {
   static async gradleToJar(
     gradleTarget: string,
     appendix: string | undefined = undefined,
-    version: string = beamVersion,
+    version: string = beamVersion.split(".").slice(0, 2).join(".") + ".0",
   ): Promise<string> {
     if (version.startsWith("0.")) {
       // node-ts 0.x corresponds to Beam 2.x.
@@ -412,7 +412,7 @@ export class PythonService extends SubprocessService {
     console.debug("Invoking Python bootstrap script.");
     const result = childProcess.spawnSync(
       PythonService.whichPython(),
-      [bootstrapScript],
+      [bootstrapScript, '--beam_version', '2.54.2'],
       { encoding: "latin1" },
     );
     if (result.status === 0) {
